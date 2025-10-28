@@ -1,0 +1,201 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>YOUR CORN</title>
+  <meta name="description" content="YOUR CORN — free AI demo for Image→Image and Text→Image generation using Hugging Face API." />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root { --neon: #ff2dbb; --neon-soft: #ff7ad8; }
+    html,body {
+      height:100%;
+      background: radial-gradient(circle at 20% 0%, #1a0a17 0%, #0a0a0f 60%, #07070a 100%);
+      color:#e5e7eb;
+      font-family: Inter, system-ui, sans-serif;
+    }
+    .neon-text { color: var(--neon); text-shadow: 0 0 6px var(--neon), 0 0 12px var(--neon), 0 0 24px var(--neon-soft); }
+    .panel { background: rgba(10,10,15,0.6); border: 1px solid rgba(255,45,187,0.25); backdrop-filter: blur(8px); }
+    .btn-primary { background: var(--neon); color:#0b0b10; box-shadow: 0 0 12px var(--neon-soft), inset 0 -2px 0 rgba(0,0,0,.2); }
+    .btn-primary:hover { filter: brightness(1.1); }
+    .tab-active { background: var(--neon); color:#0b0b10; box-shadow: 0 0 10px rgba(255,45,187,0.5); }
+    .tab-inactive { background: #0f0f16; color: #e5e7eb; }
+    .accent { accent-color: var(--neon); }
+    input, textarea, select {
+      background:#0f0f16;
+      border:1px solid rgba(255,255,255,0.12);
+      color:#e5e7eb;
+      border-radius:0.75rem;
+      padding:0.75rem;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <!-- React 18 + Babel (for JSX) -->
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+  <script type="text/babel">
+    const { useState, useRef } = React;
+    const cn = (...c) => c.filter(Boolean).join(" ");
+
+    const Section = ({ title, children }) => (
+      <section className="mb-6">
+        <h2 className="text-lg font-semibold neon-text mb-2">{title}</h2>
+        <div className="panel rounded-2xl p-4 shadow">{children}</div>
+      </section>
+    );
+
+    const Tabs = ({ value, onChange }) => {
+      const tabs = [
+        { value: "img2img", label: "Image → Image" },
+        { value: "txt2img", label: "Text → Image" },
+      ];
+      return (
+        <div className="flex gap-2 mb-5 justify-center">
+          {tabs.map(t => (
+            <button key={t.value}
+              onClick={() => onChange(t.value)}
+              className={cn("px-4 py-2 rounded-xl text-sm font-medium border transition",
+                value===t.value ? "tab-active" : "tab-inactive hover:bg-[#151521]")}>
+              {t.label}
+            </button>
+          ))}
+        </div>
+      );
+    };
+
+    const FileDrop = ({ onFile }) => {
+      const ref = useRef(); const [drag,setDrag]=useState(false);
+      return (
+        <div onDragOver={e=>{e.preventDefault();setDrag(true);}}
+             onDragLeave={()=>setDrag(false)}
+             onDrop={e=>{e.preventDefault();setDrag(false);const f=e.dataTransfer.files?.[0];if(f)onFile(f);}}
+             onClick={()=>ref.current.click()}
+             className={cn("border-2 border-dashed rounded-2xl p-6 text-center cursor-pointer",
+               drag?"border-[var(--neon)] bg-[#151521]":"border-zinc-600")}>
+          <input ref={ref} type="file" className="hidden" accept="image/*"
+                 onChange={e=>{const f=e.target.files?.[0];if(f)onFile(f);}}/>
+          <p>Drag & drop an image or click to select one</p>
+        </div>
+      );
+    };
+
+    async function callTxt2Img({ prompt, width=768, height=512 }){
+      const res = await fetch("/.netlify/functions/txt2img", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt, width, height })
+      });
+      const data = await res.json();
+      if(!res.ok) throw new Error(data.error || "txt2img error");
+      return data.imageBase64;
+    }
+
+    async function callImg2Img({ file, prompt, strength=0.35 }){
+      const form = new FormData();
+      form.append("image", file);
+      form.append("prompt", prompt || "");
+      form.append("strength", String(strength));
+      const res = await fetch("/.netlify/functions/img2img", { method: "POST", body: form });
+      const data = await res.json();
+      if(!res.ok) throw new Error(data.error || "img2img error");
+      return data.imageBase64;
+    }
+
+    const App=()=>{
+      const [tab,setTab]=useState("img2img");
+
+      // IMG→IMG
+      const [src,setSrc]=useState(null);
+      const [preview,setPreview]=useState("");
+      const [prompt,setPrompt]=useState("");
+      const [strength,setStrength]=useState(0.35);
+      const [out,setOut]=useState(""); const [loading,setLoading]=useState(false);
+
+      const handleFile=f=>{setSrc(f);setPreview(URL.createObjectURL(f));};
+      const gen=async()=>{
+        if(!src) return;
+        setLoading(true);
+        try {
+          const b64 = await callImg2Img({ file: src, prompt, strength });
+          setOut(b64);
+        } catch(e){ alert(e.message); }
+        setLoading(false);
+      };
+
+      // TXT→IMG
+      const [desc,setDesc]=useState(""); const [size,setSize]=useState("768x512");
+      const [out2,setOut2]=useState(""); const [load2,setLoad2]=useState(false);
+      const gen2=async()=>{
+        setLoad2(true);
+        try {
+          const [w,h]=size.split("x").map(n=>parseInt(n,10));
+          const b64 = await callTxt2Img({ prompt: desc, width:w, height:h });
+          setOut2(b64);
+        } catch(e){ alert(e.message); }
+        setLoad2(false);
+      };
+
+      return (
+        <div className="max-w-5xl mx-auto px-4 pb-16 text-center">
+          <header className="py-8">
+            <h1 className="text-5xl font-extrabold neon-text">YOUR CORN</h1>
+            <p className="text-sm text-zinc-400 mt-1">AI demo — Image → Image & Text → Image (Hugging Face API)</p>
+          </header>
+
+          <Tabs value={tab} onChange={setTab}/>
+
+          {tab==="img2img" ? (
+            <div className="grid md:grid-cols-2 gap-6 text-left">
+              <div>
+                <Section title="Input Image">
+                  {!preview ? <FileDrop onFile={handleFile}/> :
+                    <img src={preview} alt="preview" className="rounded-2xl w-full object-contain bg-black"/>}
+                </Section>
+                <Section title="Settings">
+                  <input placeholder="Style prompt (optional)" value={prompt}
+                         onChange={e=>setPrompt(e.target.value)}/>
+                  <label className="text-sm mt-2 mb-1 block">Transformation strength: {strength}</label>
+                  <input type="range" min="0" max="1" step="0.01" value={strength}
+                         onChange={e=>setStrength(parseFloat(e.target.value))} className="w-full accent"/>
+                  <button onClick={gen} disabled={loading}
+                          className="btn-primary rounded-xl px-4 py-2 mt-3">{loading?"Generating…":"Generate"}</button>
+                </Section>
+              </div>
+              <Section title="Result">
+                {out? <img src={out} alt="result" className="rounded-2xl w-full"/> : <p>Generated image will appear here.</p>}
+              </Section>
+            </div>
+          ):(
+            <div className="grid md:grid-cols-2 gap-6 text-left">
+              <div>
+                <Section title="Text → Image">
+                  <textarea rows="4" placeholder="e.g. Neon cornfield at sunset" value={desc}
+                            onChange={e=>setDesc(e.target.value)}></textarea>
+                  <label className="text-sm mt-2 mb-1 block">Size</label>
+                  <select value={size} onChange={e=>setSize(e.target.value)}>
+                    <option value="768x512">768×512 (landscape)</option>
+                    <option value="512x512">512×512 (square)</option>
+                    <option value="512x768">512×768 (portrait)</option>
+                  </select>
+                  <button onClick={gen2} disabled={load2}
+                          className="btn-primary rounded-xl px-4 py-2 mt-3">{load2?"Generating…":"Generate"}</button>
+                </Section>
+              </div>
+              <Section title="Result">
+                {out2? <img src={out2} alt="result" className="rounded-2xl w-full"/> : <p>Generated image will appear here.</p>}
+              </Section>
+            </div>
+          )}
+        </div>
+      );
+    };
+
+    ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>
